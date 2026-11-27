@@ -172,6 +172,17 @@ class Session {
                         output_ptrs_.data(), output_ptrs_.size());
   }
 
+  bool HasFixedEncoderChunk() const {
+    auto type = session_.GetInputTypeInfo(0);
+    const auto shape = type.GetTensorTypeAndShapeInfo().GetShape();
+    if (shape.size() != 3 ||
+        (shape[1] >= 0 && shape[1] != kChunk / kSubsampling)) {
+      throw std::invalid_argument(
+          "GigaAM-v4 step encoder needs a dynamic or 16-frame time axis");
+    }
+    return shape[1] > 0;
+  }
+
  private:
   mutable Ort::Session session_;
   std::vector<std::string> input_names_, output_names_;
@@ -214,6 +225,7 @@ class Recognizer : public OnlineRecognizerImpl {
                   config.model_config, "frontend", 6, 6),
         encoder_(env_, config.model_config.transducer.encoder,
                  config.model_config, "encoder", 58, 58),
+        fixed_chunk_(encoder_.HasFixedEncoderChunk()),
         decoder_(env_, config.model_config.transducer.decoder,
                  config.model_config, "decoder", 3, 3),
         joiner_(env_, config.model_config.transducer.joiner,
@@ -302,6 +314,8 @@ class Recognizer : public OnlineRecognizerImpl {
     const int32_t complete = remaining / kChunk * kChunk;
     // Drain complete chunks before padding the EOF remainder.
     int64_t count = complete > 0 ? complete : remaining;
+    // The specialized step has a fixed physical width, even at EOF.
+    if (fixed_chunk_) count = std::min<int64_t>(count, kChunk);
     const int64_t padded = (count + kChunk - 1) / kChunk * kChunk;
     auto frames = s->GetFrames(processed, static_cast<int32_t>(count));
     std::vector<float> mel(kMelBins * padded);
@@ -404,7 +418,9 @@ class Recognizer : public OnlineRecognizerImpl {
   }
 
   Ort::Env env_{ORT_LOGGING_LEVEL_ERROR};
-  Session frontend_, encoder_, decoder_, joiner_;
+  Session frontend_, encoder_;
+  bool fixed_chunk_;
+  Session decoder_, joiner_;
   SymbolTable symbols_;
   Endpoint endpoint_;
   bool enable_endpoint_;
