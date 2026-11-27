@@ -124,9 +124,9 @@ class Session {
           const OnlineModelConfig &config, const char *graph, size_t inputs,
           size_t outputs)
       : session_(nullptr) {
-    auto options =
-        GetSessionOptionsImpl(config.num_threads, config.provider_config.provider,
-                              &config.provider_config, nullptr, graph);
+    auto options = GetSessionOptionsImpl(
+        config.num_threads, config.provider_config.provider,
+        &config.provider_config, nullptr, graph);
     options.SetLogId(graph);
     session_ = Ort::Session(env, SHERPA_ONNX_TO_ORT_PATH(path), options);
     if (session_.GetInputCount() != inputs ||
@@ -216,8 +216,8 @@ class Recognizer : public OnlineRecognizerImpl {
                  config.model_config, "encoder", 58, 58),
         decoder_(env_, config.model_config.transducer.decoder,
                  config.model_config, "decoder", 3, 3),
-        joiner_(env_, config.model_config.transducer.joiner, config.model_config,
-                "joiner", 2, 1),
+        joiner_(env_, config.model_config.transducer.joiner,
+                config.model_config, "joiner", 2, 1),
         symbols_(config.model_config.tokens),
         endpoint_(config.endpoint_config),
         enable_endpoint_(config.enable_endpoint),

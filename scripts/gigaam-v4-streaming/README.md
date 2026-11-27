@@ -1,6 +1,6 @@
 # GigaAM-v4 streaming RNN-T
 
-This CPU recognizer uses the [GigaAM-v4 640 ms ONNX package](https://huggingface.co/ai-babai/gigaam-v4-onnx/tree/00936113c4ccdb679da0212ebdef8e52b73aac48/rnnt-streaming-640ms).
+This recognizer defaults to CPU and uses the [GigaAM-v4 640 ms ONNX package](https://huggingface.co/ai-babai/gigaam-v4-onnx/tree/00936113c4ccdb679da0212ebdef8e52b73aac48/rnnt-streaming-640ms).
 It keeps acoustic and predictor state in each stream. Keep the matching
 `*_stream_frontend.onnx` file beside the encoder. The encoder filename can
 end in `_stream_step.onnx`, `_stream_step.int8.onnx`,
@@ -100,6 +100,29 @@ sherpa-onnx --model-type=gigaam_v4 --provider=cpu --num-threads=3 \
   --decoder=v4_rnnt_640ms_e2e_decoder.onnx \
   --joiner=v4_rnnt_640ms_e2e_joint.onnx speech.wav
 ```
+
+## Execution provider
+
+Set `provider="cuda"` or `provider="coreml"` in Python, or pass the same
+name to `--provider` in the CLI. Build Sherpa with
+`SHERPA_ONNX_ENABLE_GPU=ON` for CUDA. CoreML requires an Apple build with
+the CoreML execution provider in ONNX Runtime.
+
+The selected provider is passed to the frontend, encoder, decoder and joiner
+sessions. ONNX Runtime can assign individual operations to CPU and returns
+host outputs for the decoder and per-stream state.
+
+Use `--provider=cuda:/path/to/provider.conf` to capture logs and placement
+profiles. Set the prefix in an existing writable directory.
+
+```ini
+LogSeverityLevel=0
+ProfilingFilePrefix=/path/to/gigaam-stream
+```
+
+After the recognizer is destroyed, read `args.provider` on the Node events
+in the four profiles. Their prefixes include `-frontend`, `-encoder`,
+`-decoder` and `-joiner`.
 
 ## Streaming regression test
 
