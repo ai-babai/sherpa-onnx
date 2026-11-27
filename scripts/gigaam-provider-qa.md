@@ -44,6 +44,73 @@ export SHERPA_ONNXRUNTIME_INCLUDE_DIR="$ORT/include"
 export SHERPA_ONNXRUNTIME_LIB_DIR="$ORT/lib"
 ```
 
+## Native Apple models
+
+The macOS-only build option `SHERPA_ONNX_ENABLE_GIGAAM_COREML=ON` enables
+direct Core ML loading for both compiled model formats. The option defaults
+to OFF. Set `ORT` to an unpacked CoreML-enabled arm64 ORT 1.23.2 SDK and
+configure a fresh build.
+
+```sh
+cmake -S . -B build-mac-native -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+  -DSHERPA_ONNX_ENABLE_GIGAAM_COREML=ON -DSHERPA_ONNX_ENABLE_PYTHON=ON \
+  -DSHERPA_ONNX_USE_PRE_INSTALLED_ONNXRUNTIME_IF_AVAILABLE=OFF \
+  -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME="$ORT" \
+  -DSHERPA_ONNX_ENABLE_TESTS=ON -DSHERPA_ONNX_ENABLE_BINARY=ON \
+  -DSHERPA_ONNX_ENABLE_C_API=OFF -DSHERPA_ONNX_BUILD_C_API_EXAMPLES=OFF \
+  -DPython_EXECUTABLE="$(command -v python)" \
+  -DSHERPA_ONNX_ENABLE_PORTAUDIO=OFF -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF
+cmake --build build-mac-native --parallel 8 --target _sherpa_onnx sherpa-onnx-offline sherpa-onnx
+```
+
+Place a signed `libonnxruntime.1.23.2.dylib` beside the Python extension
+when staging it. For command-line use, add that directory to
+`DYLD_LIBRARY_PATH` if needed. The combined smoke used a signed copy of the
+1.23.2 arm64 SDK runtime at ORT commit `a83fc4d58cb4`.
+
+Use a compiled CTC model directory and its token table. Python uses
+`OfflineRecognizer.from_nemo_ctc` with the same model, provider, sample rate
+and feature dimension.
+
+```sh
+build-mac-native/bin/sherpa-onnx-offline \
+  --provider=coreml --model-type=nemo_ctc --num-threads=3 \
+  --sample-rate=16000 --feat-dim=64 --nemo-ctc-model="$CTC_MODEL" \
+  --tokens="$CTC_TOKENS" "$WAV"
+```
+
+For fused streaming, use `coreml_fused` and a compiled
+`*_stream_step.mlmodelc` encoder. Keep its matching `*_stream_frontend.onnx`
+beside it and use the published decoder, joiner and matching token table.
+The frontend, decoder and joiner run through CPU ORT. Python uses
+`OnlineRecognizer.from_transducer` with the same graph and provider arguments.
+
+```sh
+build-mac-native/bin/sherpa-onnx --model-type=gigaam_v4 --provider=coreml_fused \
+  --num-threads=3 --left-padding=0 --right-padding=0 --enable-endpoint=false \
+  --encoder="$STREAM_ENCODER" --decoder="$STREAM_DECODER" \
+  --joiner="$STREAM_JOINER" --tokens="$STREAM_TOKENS" "$WAV"
+```
+
+The registered streaming regression supports the native route. Set the
+existing fixture variables to the compiled encoder and its companions, and
+run it with `SHERPA_ONNX_GIGAAM_TEST_PROVIDER=coreml_fused`. Use the CLI or
+Python factory above for the native CTC smoke.
+
+Both CLI commands passed on an M4 Pro with macOS 15.8.1. One Python process
+loaded the combined extension and exercised both direct Core ML routes and
+ordinary CPU streaming. CTC text and tokens matched the CLI. On the
+streaming sample, fused Core ML and stock INT8 CPU produced identical text
+and tokens. The fused regression passed 3/3 Python and 8/8 C++ cases.
+The default build with the native option OFF passed the five regular
+offline and streaming Python cases.
+
+The individual hardware benchmarks were run on CTC source `fdb966f2` and
+fused streaming source `1be42541`. Their runtime source files have identical
+Git blobs in the combined preview. The benchmarks retain their measured
+binary and model pins.
+
 ## Verify placement
 
 Set `provider="cuda:/absolute/path/provider.conf"` in Python or pass
