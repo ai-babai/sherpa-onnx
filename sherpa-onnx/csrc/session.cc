@@ -499,7 +499,8 @@ Ort::SessionOptions GetSessionOptionsImpl(
       if (std::find(available_providers.begin(), available_providers.end(),
                     "CoreMLExecutionProvider") == available_providers.end()) {
         SHERPA_ONNX_LOGE(
-            "CoreML is not available. Available providers: %s. Fallback to cpu!",
+            "CoreML is not available. Available providers: %s. Fallback to "
+            "cpu!",
             os.str().c_str());
         break;
       }
@@ -516,8 +517,7 @@ Ort::SessionOptions GetSessionOptionsImpl(
           "CoreML provider options require ONNX Runtime 1.20 or newer");
 #endif
 #else
-      SHERPA_ONNX_LOGE(
-          "CoreML is unavailable in this build. Fallback to cpu!");
+      SHERPA_ONNX_LOGE("CoreML is unavailable in this build. Fallback to cpu!");
 #endif
       break;
     }
