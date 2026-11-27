@@ -281,7 +281,11 @@ class OnlineRecognizer(object):
         """
         self = cls.__new__(cls)
         _assert_file_exists(tokens)
-        _assert_file_exists(encoder)
+        if provider == "coreml_fused":
+            if not Path(encoder).is_dir():
+                raise FileNotFoundError(f"Compiled Core ML encoder directory not found: {encoder}")
+        else:
+            _assert_file_exists(encoder)
         _assert_file_exists(decoder)
         _assert_file_exists(joiner)
 
