@@ -372,6 +372,13 @@ endif()
 # Always static build
 add_library(sherpa-onnx-core STATIC ${sources})
 
+if(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML AND APPLE)
+  target_sources(sherpa-onnx-core PRIVATE gigaam-v4-coreml-step.mm)
+  target_compile_definitions(sherpa-onnx-core PRIVATE SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+  set_source_files_properties(gigaam-v4-coreml-step.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+  target_link_libraries(sherpa-onnx-core "-framework CoreML" "-framework Foundation")
+endif()
+
 
 if(WIN32 AND SHERPA_ONNX_LINK_D3D)
     target_link_libraries(sherpa-onnx-core dxguid.lib d3d12.lib dxgi.lib dxcore.lib)

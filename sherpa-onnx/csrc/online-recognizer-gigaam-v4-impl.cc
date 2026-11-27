@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <iterator>
 #include <memory>
 #include <stdexcept>
@@ -14,6 +17,9 @@
 #include <utility>
 #include <vector>
 
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+#include "sherpa-onnx/csrc/gigaam-v4-coreml-step.h"
+#endif
 #include "sherpa-onnx/csrc/online-recognizer-impl.h"
 #include "sherpa-onnx/csrc/onnx-utils.h"
 #include "sherpa-onnx/csrc/session.h"
@@ -49,7 +55,8 @@ FeatureExtractorConfig GigaAmFeatures() {
 std::string FrontendPath(const std::string &encoder) {
   for (const std::string suffix :
        {"_stream_step.int8.onnx", "_stream_step.int4.onnx",
-        "_stream_step.fp16.onnx", "_stream_step.onnx"}) {
+        "_stream_step.fp16.onnx", "_stream_step.onnx",
+        "_stream_step.mlmodelc"}) {
     if (EndsWith(encoder, suffix)) {
       return encoder.substr(0, encoder.size() - suffix.size()) +
              "_stream_frontend.onnx";
@@ -57,7 +64,7 @@ std::string FrontendPath(const std::string &encoder) {
   }
 
   throw std::invalid_argument(
-      "GigaAM-v4 encoder must be named *_stream_step[.int8|.int4|.fp16].onnx");
+      "Unexpected GigaAM-v4 encoder filename; use *_stream_step*.onnx or *_stream_step.mlmodelc");
 }
 
 enum class Head { kUnknown, kE2e, kRaw };
@@ -123,9 +130,19 @@ class Session {
   Session(Ort::Env &env, const std::string &path,
           const OnlineModelConfig &config, const char *graph, size_t inputs,
           size_t outputs)
-      : session_(nullptr) {
+      : session_(nullptr),
+        graph_(graph),
+        profile_host_(std::getenv("SHERPA_GIGAAM_STREAM_PROFILE") != nullptr) {
+    const auto &provider = config.provider_config.provider;
+    const bool fused = provider == "coreml_fused";
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+    if (fused && std::string(graph) == "encoder") {
+      fused_step_ = std::make_unique<GigaAmCoreMlStep>(path);
+      return;
+    }
+#endif
     auto options = GetSessionOptionsImpl(
-        config.num_threads, config.provider_config.provider,
+        config.num_threads, fused ? "cpu" : provider,
         &config.provider_config, nullptr, graph);
     options.SetLogId(graph);
     session_ = Ort::Session(env, SHERPA_ONNX_TO_ORT_PATH(path), options);
@@ -138,6 +155,9 @@ class Session {
   }
 
   std::vector<Ort::Value> ZeroState(size_t start) const {
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+    if (fused_step_) return fused_step_->ZeroState(start);
+#endif
     Ort::AllocatorWithDefaultOptions allocator;
     std::vector<Ort::Value> state;
     for (size_t i = start; i < input_ptrs_.size(); ++i) {
@@ -166,13 +186,26 @@ class Session {
   }
 
   std::vector<Ort::Value> Run(const std::vector<Ort::Value> &inputs) const {
-    // Fetch outputs to host memory for CPU decoding and ownership of state
-    // across calls, including when ORT dispatches graph nodes to a GPU.
-    return session_.Run({}, input_ptrs_.data(), inputs.data(), inputs.size(),
-                        output_ptrs_.data(), output_ptrs_.size());
+    const auto run = [&]() {
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+      if (fused_step_) return fused_step_->Run(inputs);
+#endif
+      return session_.Run({}, input_ptrs_.data(), inputs.data(), inputs.size(),
+                          output_ptrs_.data(), output_ptrs_.size());
+    };
+    if (!profile_host_) return run();
+    const auto start = std::chrono::steady_clock::now();
+    auto result = run();
+    const auto elapsed = std::chrono::duration<double, std::micro>(
+        std::chrono::steady_clock::now() - start).count();
+    std::fprintf(stderr, "gigaam_session %s %.4f\n", graph_, elapsed);
+    return result;
   }
 
   bool HasFixedEncoderChunk() const {
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+    if (fused_step_) return true;
+#endif
     auto type = session_.GetInputTypeInfo(0);
     const auto shape = type.GetTensorTypeAndShapeInfo().GetShape();
     if (shape.size() != 3 ||
@@ -185,6 +218,11 @@ class Session {
 
  private:
   mutable Ort::Session session_;
+  const char *graph_;
+  bool profile_host_;
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+  std::unique_ptr<GigaAmCoreMlStep> fused_step_;
+#endif
   std::vector<std::string> input_names_, output_names_;
   std::vector<const char *> input_ptrs_, output_ptrs_;
 };
@@ -434,8 +472,18 @@ std::unique_ptr<OnlineRecognizerImpl> CreateOnlineGigaAmV4(
     const OnlineRecognizerConfig &config) {
   const auto &provider = config.model_config.provider_config.provider;
   const auto name = ToLowerAscii(Trim(provider.substr(0, provider.find(':'))));
-  if (config.decoding_method != "greedy_search" ||
-      (name != "cpu" && name != "cuda" && name != "coreml")) {
+  bool supported = name == "cpu" || name == "cuda" || name == "coreml";
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+  const bool fused = provider == "coreml_fused";
+  const bool compiled =
+      EndsWith(config.model_config.transducer.encoder, "_stream_step.mlmodelc");
+  if (fused != compiled) {
+    throw std::invalid_argument(
+        "coreml_fused requires a compiled *_stream_step.mlmodelc encoder");
+  }
+  supported |= fused;
+#endif
+  if (config.decoding_method != "greedy_search" || !supported) {
     throw std::invalid_argument(
         "GigaAM-v4 online supports cpu, cuda and coreml with greedy_search");
   }
