@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -499,12 +500,28 @@ Ort::SessionOptions GetSessionOptionsImpl(
     case Provider::kCoreML: {
 #if defined(__APPLE__) && (ORT_API_VERSION >= 15) && \
     !defined(SHERPA_ONNX_DISABLE_COREML)
-      uint32_t coreml_flags = 0;
-      (void)OrtSessionOptionsAppendExecutionProvider_CoreML(sess_opts,
-                                                            coreml_flags);
+      if (std::find(available_providers.begin(), available_providers.end(),
+                    "CoreMLExecutionProvider") == available_providers.end()) {
+        SHERPA_ONNX_LOGE(
+            "CoreML is not available. Available providers: %s. Fallback to cpu!",
+            os.str().c_str());
+        break;
+      }
+      config.erase("DEBUG");
+      if (config.empty()) {
+        Ort::ThrowOnError(
+            OrtSessionOptionsAppendExecutionProvider_CoreML(sess_opts, 0));
+        break;
+      }
+#if ORT_API_VERSION >= 20
+      sess_opts.AppendExecutionProvider("CoreML", config);
+#else
+      throw std::invalid_argument(
+          "CoreML provider options require ONNX Runtime 1.20 or newer");
+#endif
 #else
       SHERPA_ONNX_LOGE(
-          "CoreML is for Apple only since onnxruntime>=1.15. Fallback to cpu!");
+          "CoreML is unavailable in this build. Fallback to cpu!");
 #endif
       break;
     }
