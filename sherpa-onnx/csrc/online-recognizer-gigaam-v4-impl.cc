@@ -121,8 +121,14 @@ float *CheckedFloatData(Ort::Value *tensor, size_t count,
 class Session {
  public:
   Session(Ort::Env &env, const std::string &path,
-          const Ort::SessionOptions &options, size_t inputs, size_t outputs)
-      : session_(env, SHERPA_ONNX_TO_ORT_PATH(path), options) {
+          const OnlineModelConfig &config, const char *graph, size_t inputs,
+          size_t outputs)
+      : session_(nullptr) {
+    auto options =
+        GetSessionOptionsImpl(config.num_threads, config.provider_config.provider,
+                              &config.provider_config, nullptr, graph);
+    options.SetLogId(graph);
+    session_ = Ort::Session(env, SHERPA_ONNX_TO_ORT_PATH(path), options);
     if (session_.GetInputCount() != inputs ||
         session_.GetOutputCount() != outputs) {
       throw std::invalid_argument("Unexpected GigaAM-v4 ONNX graph: " + path);
@@ -160,6 +166,8 @@ class Session {
   }
 
   std::vector<Ort::Value> Run(const std::vector<Ort::Value> &inputs) const {
+    // Fetch outputs to host memory for CPU decoding and ownership of state
+    // across calls, including when ORT dispatches graph nodes to a GPU.
     return session_.Run({}, input_ptrs_.data(), inputs.data(), inputs.size(),
                         output_ptrs_.data(), output_ptrs_.size());
   }
@@ -202,13 +210,14 @@ class Recognizer : public OnlineRecognizerImpl {
  public:
   Recognizer(const OnlineRecognizerConfig &config, bool raw)
       : OnlineRecognizerImpl(config),
-        options_(GetSessionOptions(config.model_config)),
         frontend_(env_, FrontendPath(config.model_config.transducer.encoder),
-                  options_, 6, 6),
-        encoder_(env_, config.model_config.transducer.encoder, options_, 58,
-                 58),
-        decoder_(env_, config.model_config.transducer.decoder, options_, 3, 3),
-        joiner_(env_, config.model_config.transducer.joiner, options_, 2, 1),
+                  config.model_config, "frontend", 6, 6),
+        encoder_(env_, config.model_config.transducer.encoder,
+                 config.model_config, "encoder", 58, 58),
+        decoder_(env_, config.model_config.transducer.decoder,
+                 config.model_config, "decoder", 3, 3),
+        joiner_(env_, config.model_config.transducer.joiner, config.model_config,
+                "joiner", 2, 1),
         symbols_(config.model_config.tokens),
         endpoint_(config.endpoint_config),
         enable_endpoint_(config.enable_endpoint),
@@ -394,7 +403,6 @@ class Recognizer : public OnlineRecognizerImpl {
   }
 
   Ort::Env env_{ORT_LOGGING_LEVEL_ERROR};
-  Ort::SessionOptions options_;
   Session frontend_, encoder_, decoder_, joiner_;
   SymbolTable symbols_;
   Endpoint endpoint_;
@@ -407,10 +415,12 @@ class Recognizer : public OnlineRecognizerImpl {
 
 std::unique_ptr<OnlineRecognizerImpl> CreateOnlineGigaAmV4(
     const OnlineRecognizerConfig &config) {
+  const auto &provider = config.model_config.provider_config.provider;
+  const auto name = ToLowerAscii(Trim(provider.substr(0, provider.find(':'))));
   if (config.decoding_method != "greedy_search" ||
-      config.model_config.provider_config.provider != "cpu") {
+      (name != "cpu" && name != "cuda" && name != "coreml")) {
     throw std::invalid_argument(
-        "GigaAM-v4 online supports the CPU provider and greedy_search");
+        "GigaAM-v4 online supports cpu, cuda and coreml with greedy_search");
   }
   return std::make_unique<Recognizer>(config, IsRawModel(config.model_config));
 }
