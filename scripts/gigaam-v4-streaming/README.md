@@ -157,3 +157,12 @@ and mixed-head rejection.
 CTest skips it if the fixture variables are unset. To test a released INT4
 package, point the package variable at that directory and set
 `SHERPA_ONNX_GIGAAM_STREAMING_ENCODER=v4_rnnt_640ms_stream_step.int4.onnx`.
+
+The test defaults to CPU. Run the same cases with CUDA, or specify
+`coreml:/absolute/path/provider.conf` for a CoreML build and compatible
+encoder. A profiled run verifies provider placement.
+
+```sh
+SHERPA_ONNX_GIGAAM_TEST_PROVIDER=cuda:/absolute/path/provider.conf \
+  ctest --test-dir build -R '^test_online_gigaam_v4_py$' --output-on-failure
+```
