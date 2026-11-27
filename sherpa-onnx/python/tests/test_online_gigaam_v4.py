@@ -26,7 +26,7 @@ class TestOnlineGigaamV4(unittest.TestCase):
             decoder=str(self.package / "v4_rnnt_640ms_e2e_decoder.onnx"),
             joiner=str(self.package / "v4_rnnt_640ms_e2e_joint.onnx"),
             model_type="gigaam_v4",
-            provider="cpu",
+            provider=os.getenv("SHERPA_ONNX_GIGAAM_TEST_PROVIDER", "cpu"),
             num_threads=3,
             enable_endpoint_detection=False,
         )
