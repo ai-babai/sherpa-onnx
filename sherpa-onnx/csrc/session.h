@@ -43,10 +43,11 @@ Ort::SessionOptions GetSessionOptionsImpl(
     int32_t num_threads, const std::string &provider_str,
     const ProviderConfig *provider_config = nullptr);
 
-Ort::SessionOptions GetSessionOptionsImpl(
-    int32_t num_threads, const std::string &provider_str,
-    const ProviderConfig *provider_config,
-    CudaProviderInfo *cuda_provider_info, const char *profile_suffix = nullptr);
+Ort::SessionOptions GetSessionOptionsImpl(int32_t num_threads,
+                                          const std::string &provider_str,
+                                          const ProviderConfig *provider_config,
+                                          CudaProviderInfo *cuda_provider_info,
+                                          const char *profile_suffix = nullptr);
 
 Ort::SessionOptions GetSessionOptions(const OfflineLMConfig &config);
 Ort::SessionOptions GetSessionOptions(const OnlineLMConfig &config);
