@@ -230,10 +230,11 @@ Ort::SessionOptions GetSessionOptionsImpl(
                                nullptr);
 }
 
-Ort::SessionOptions GetSessionOptionsImpl(
-    int32_t num_threads, const std::string &provider_str,
-    const ProviderConfig *provider_config,
-    CudaProviderInfo *cuda_provider_info) {
+Ort::SessionOptions GetSessionOptionsImpl(int32_t num_threads,
+                                          const std::string &provider_str,
+                                          const ProviderConfig *provider_config,
+                                          CudaProviderInfo *cuda_provider_info,
+                                          const char *profile_suffix) {
   if (cuda_provider_info != nullptr) {
     *cuda_provider_info = {};
   }
@@ -277,8 +278,12 @@ Ort::SessionOptions GetSessionOptionsImpl(
   }
 
   if (config.find("ProfilingFilePrefix") != config.end()) {
-    sess_opts.EnableProfiling(
-        SHERPA_ONNX_TO_ORT_PATH(config["ProfilingFilePrefix"]));
+    std::string prefix = config["ProfilingFilePrefix"];
+    if (profile_suffix != nullptr) {
+      prefix += "-";
+      prefix += profile_suffix;
+    }
+    sess_opts.EnableProfiling(SHERPA_ONNX_TO_ORT_PATH(prefix));
     config.erase("ProfilingFilePrefix");
   }
 
