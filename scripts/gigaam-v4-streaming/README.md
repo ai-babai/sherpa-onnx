@@ -124,6 +124,39 @@ After the recognizer is destroyed, read `args.provider` on the Node events
 in the four profiles. Their prefixes include `-frontend`, `-encoder`,
 `-decoder` and `-joiner`.
 
+### Experimental fixed-chunk Core ML encoder
+
+The released dynamic INT8 step can fail while Core ML builds its MLProgram.
+For a fixed-chunk experiment, start with the FP16-storage package at
+[revision `aff7eef3`](https://huggingface.co/ai-babai/gigaam-v4-onnx/tree/aff7eef3c9ff064455154363ba96149594d16ac0/rnnt-streaming-640ms).
+Keep its frontend, head graphs and token table. Run the projection-slice
+rewrite from the `ai-babai/gigaam-onnx` checkout at
+`7bac3b3c34de1bcf56009b0904f8c692e4d5f4e3`, followed by the step specializer.
+Use ONNX 1.19.1 and ONNX Runtime 1.23.2.
+
+```sh
+python "$GIGAAM_ONNX/conversion/coreml_attention_slices.py" \
+  "$PACKAGE/v4_rnnt_640ms_stream_step.onnx" "$PACKAGE/step-rewritten.onnx"
+python scripts/gigaam-v4-streaming/specialize_coreml_step.py \
+  "$PACKAGE/step-rewritten.onnx" "$PACKAGE/v4_rnnt_640ms_stream_step.fp16.onnx"
+```
+
+The resulting graph uses a 16-frame encoder input and retains the live frame
+count. The native recognizer drains queued audio one 640 ms block at a time
+for this graph and pads the final short block. Keep the normal provider and
+encoder arguments for the released packages. To test this graph, select it as
+the encoder and pass `coreml:/path/to/provider.conf` with these settings:
+
+```ini
+ModelFormat=MLProgram
+MLComputeUnits=CPUAndGPU
+RequireStaticInputShapes=1
+```
+
+The graph keeps FP16 storage and FP32 compute. On an Apple M4 Pro, the
+tested configuration exercised the GPU during decoding and ran slower
+than CPU. Use the released CPU package for normal operation.
+
 ## Streaming regression test
 
 From the source checkout, download the pinned package above without changing
