@@ -1121,13 +1121,16 @@ class OfflineRecognizer(object):
         language: str = "auto",
         head: str = "e2e",
         num_threads: int = 1,
+        provider: str = "cpu",
     ):
-        """Create a CPU recognizer for the full-context GigaAM RNN-T export.
+        """Create a recognizer for the full-context GigaAM RNN-T export.
 
         Provide the released encoder, advance graph and SentencePiece model
         matching the selected head. Use "e2e" for formatted text and "raw"
         for plain text. Language codes are only supported by Multilingual-v2.
         A stream's "language" option overrides the configured default.
+        Set provider to "cpu", "cuda" or "coreml", optionally followed by
+        ":<config-file>" for ONNX Runtime session and provider options.
         """
         for path in (encoder, advance, tokenizer):
             _assert_file_exists(path)
@@ -1140,7 +1143,9 @@ class OfflineRecognizer(object):
         model.head = head
 
         feat_config = FeatureExtractorConfig(sampling_rate=16000, feature_dim=64)
-        model_config = OfflineModelConfig(gigaam=model, num_threads=num_threads)
+        model_config = OfflineModelConfig(
+            gigaam=model, num_threads=num_threads, provider=provider
+        )
         recognizer_config = OfflineRecognizerConfig(
             feat_config=feat_config, model_config=model_config
         )

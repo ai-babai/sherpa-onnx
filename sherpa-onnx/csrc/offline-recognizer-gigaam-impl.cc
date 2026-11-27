@@ -89,11 +89,17 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
         head_(config.model_config.gigaam.head == "e2e" ? 0 : 1),
         env_(ORT_LOGGING_LEVEL_ERROR) {
     const auto &model = config.model_config.gigaam;
-    auto opts = GetSessionOptions(config.model_config);
-    opts.AddConfigEntry("session.intra_op.allow_spinning", "0");
+    const auto options = [&config](const char *graph) {
+      auto opts = GetSessionOptionsImpl(
+          config.model_config.num_threads, config.model_config.provider,
+          nullptr, nullptr, graph);
+      opts.SetLogId(graph);
+      opts.AddConfigEntry("session.intra_op.allow_spinning", "0");
+      return opts;
+    };
 
     encoder_ = std::make_unique<Ort::Session>(
-        env_, SHERPA_ONNX_TO_ORT_PATH(model.encoder), opts);
+        env_, SHERPA_ONNX_TO_ORT_PATH(model.encoder), options("encoder"));
     const size_t num_inputs = encoder_->GetInputCount();
     has_language_input_ = num_inputs == kEncoderInputs.size();
     CheckGraph(encoder_.get(), kEncoderInputs, has_language_input_ ? 3 : 2,
@@ -101,7 +107,7 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
     LanguageSlot(model.language);
 
     advance_ = std::make_unique<Ort::Session>(
-        env_, SHERPA_ONNX_TO_ORT_PATH(model.advance), opts);
+        env_, SHERPA_ONNX_TO_ORT_PATH(model.advance), options("advance"));
     CheckGraph(advance_.get(), kAdvanceInputs, kAdvanceInputs.size(),
                kAdvanceOutputs);
   }
@@ -176,6 +182,8 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
                                            shape.size());
     }
 
+    // Ordinary Run fetches outputs to host memory for the CPU length and token
+    // reads, even when the graph executes on an accelerator.
     auto encoded = encoder_->Run(
         {}, kEncoderInputs.data(), inputs.data(), has_language_input_ ? 3 : 2,
         kEncoderOutputs.data(), kEncoderOutputs.size());
@@ -226,12 +234,10 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
 
 std::unique_ptr<OfflineRecognizerImpl> CreateOfflineRecognizerGigaAM(
     const OfflineRecognizerConfig &config) {
-  if (config.model_config.provider != "cpu" ||
-      config.model_config.num_threads < 1 ||
-      config.decoding_method != "greedy_search" ||
-      !config.model_config.gigaam.Validate()) {
+  if (config.decoding_method != "greedy_search" ||
+      !config.model_config.Validate()) {
     throw std::invalid_argument(
-        "GigaAM requires valid model files, CPU and greedy_search");
+        "GigaAM requires a valid model config and greedy_search");
   }
   return std::make_unique<OfflineRecognizerGigaAMImpl>(config);
 }
