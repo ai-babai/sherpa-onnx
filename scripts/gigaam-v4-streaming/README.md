@@ -124,6 +124,16 @@ After the recognizer is destroyed, read `args.provider` on the Node events
 in the four profiles. Their prefixes include `-frontend`, `-encoder`,
 `-decoder` and `-joiner`.
 
+### Fixed-width encoders
+
+The encoder can have a dynamic time axis or a fixed 16-frame time axis in
+its first input. A fixed-width export retains the published graph inputs,
+outputs and state layout, as well as the matching dynamic frontend.
+The recognizer runs one 640 ms step per decode for a fixed-width encoder.
+Call decode while the stream is ready after each input packet and after
+EOF. Input packets can have any size. At EOF the recognizer pads the physical
+chunk and the graphs receive the true length of the remaining audio.
+
 ## Streaming regression test
 
 From the source checkout, download the pinned package above without changing
