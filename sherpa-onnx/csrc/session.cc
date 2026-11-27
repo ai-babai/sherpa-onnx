@@ -230,10 +230,11 @@ Ort::SessionOptions GetSessionOptionsImpl(
                                nullptr);
 }
 
-Ort::SessionOptions GetSessionOptionsImpl(
-    int32_t num_threads, const std::string &provider_str,
-    const ProviderConfig *provider_config,
-    CudaProviderInfo *cuda_provider_info, const char *profile_suffix) {
+Ort::SessionOptions GetSessionOptionsImpl(int32_t num_threads,
+                                          const std::string &provider_str,
+                                          const ProviderConfig *provider_config,
+                                          CudaProviderInfo *cuda_provider_info,
+                                          const char *profile_suffix) {
   if (cuda_provider_info != nullptr) {
     *cuda_provider_info = {};
   }
