@@ -237,7 +237,8 @@ std::unique_ptr<OfflineRecognizerImpl> CreateOfflineRecognizerGigaAM(
   if (config.decoding_method != "greedy_search" ||
       !config.model_config.Validate()) {
     throw std::invalid_argument(
-        "GigaAM requires a valid model config and greedy_search");
+        "GigaAM requires valid model files, a supported provider and "
+        "greedy_search");
   }
   return std::make_unique<OfflineRecognizerGigaAMImpl>(config);
 }
