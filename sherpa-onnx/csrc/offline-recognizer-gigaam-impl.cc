@@ -90,9 +90,9 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
         env_(ORT_LOGGING_LEVEL_ERROR) {
     const auto &model = config.model_config.gigaam;
     const auto options = [&config](const char *graph) {
-      auto opts = GetSessionOptionsImpl(
-          config.model_config.num_threads, config.model_config.provider,
-          nullptr, nullptr, graph);
+      auto opts = GetSessionOptionsImpl(config.model_config.num_threads,
+                                        config.model_config.provider, nullptr,
+                                        nullptr, graph);
       opts.SetLogId(graph);
       opts.AddConfigEntry("session.intra_op.allow_spinning", "0");
       return opts;

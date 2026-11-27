@@ -101,7 +101,8 @@ bool OfflineModelConfig::Validate() const {
   }
 
   if (!gigaam.encoder.empty()) {
-    const auto name = ToLowerAscii(Trim(provider.substr(0, provider.find(':'))));
+    const auto name =
+        ToLowerAscii(Trim(provider.substr(0, provider.find(':'))));
     if (name != "cpu" && name != "cuda" && name != "coreml") {
       SHERPA_ONNX_LOGE("GigaAM supports cpu, cuda and coreml providers");
       return false;

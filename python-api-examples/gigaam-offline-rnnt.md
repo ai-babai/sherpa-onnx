@@ -13,7 +13,7 @@ and Python 3.12 on macOS arm64.
 Download the encoder, matching `*_advance.onnx` and one SentencePiece
 `*_tokenizer.model` from the same package. Use `head="e2e"` with the e2e
 tokenizer for formatted text or `head="raw"` with the raw tokenizer for
-plain text. The recognizer runs on CPU and accepts one utterance of up to
+plain text. The recognizer defaults to CPU and accepts one utterance of up to
 30 seconds per stream.
 
 ```python
@@ -47,6 +47,29 @@ print(stream.result.text)
 Use a mono 16-bit PCM WAV. For Multilingual-v2, set `language="kk"` on the recognizer
 or call `stream.set_option("language", "kk")` before decoding an individual
 stream. For v4, leave the language at `"auto"`.
+
+## Execution provider
+
+Pass `provider="cuda"` or `provider="coreml"` to `from_gigaam`. The CLI
+uses `--provider=cuda` or `--provider=coreml` with the `--gigaam-*` flags.
+Build Sherpa with `SHERPA_ONNX_ENABLE_GPU=ON` for CUDA. CoreML requires an
+Apple build with the CoreML execution provider in ONNX Runtime.
+
+Both graphs use the selected provider and ONNX Runtime can assign individual
+operations to CPU. The recognizer reads lengths and tokens on the host;
+ONNX Runtime returns host outputs from the ordinary session `Run` call.
+
+For placement diagnostics, use `provider="cuda:/path/to/provider.conf"` with
+these settings in the existing key-value config file.
+
+```ini
+LogSeverityLevel=0
+ProfilingFilePrefix=/path/to/gigaam-offline
+```
+
+The paths are writable prefixes in an existing directory. After the recognizer
+is destroyed, inspect the `*-encoder_*.json` and `*-advance_*.json` Node
+events and their `args.provider` values to verify placement.
 
 ## Offline regression test
 
