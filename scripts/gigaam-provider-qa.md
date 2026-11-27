@@ -94,6 +94,7 @@ copies incurred by this path.
 | macOS CPU, ORT 1.28.2, stock RNN-T INT8 | 12/12 native scenarios. CUDA unavailable also produced identical text and tokens on the pinned Sherpa Russian WAV. |
 | macOS CoreML, ORT 1.28.2, stock v4 CTC FP32 and offline RNN-T INT8 | `self_attn/Reshape_3` during inference after partial CoreML placement. |
 | macOS CoreML, ORT 1.28.2, stock streaming INT8 | Encoder session failed CoreML execution-plan creation with error -14. |
+| macOS CoreML, ORT 1.23.2, folded fixed-width streaming FP16 | CPU and CoreML each passed the registered 3-case Python regression. Apple GPU activity in all three warm decode windows. |
 | macOS CoreML, ORT 1.23.2, compact fixed-width streaming FP16 | Python streaming regression 3/3. Physical Apple GPU activity in all three warm decode windows. Compared with the same graph on CPU, chunk p50 was 45.1 ms versus 34.6 ms over 390 measured chunks per provider. |
 | Linux x86_64, A40 CUDA, ORT 1.28.2, stock GigaAM | CTC smoke matched CPU at FP32, FP16, INT8 and INT4. RNN-T CPU and CUDA scenario suites passed on the dynamic graphs. |
 
@@ -101,8 +102,13 @@ The CoreML results were measured on an M4 Pro running macOS 15.8.1.
 The CTC legacy-config control had the same 211 CoreML partitions, provider
 event counts and fused-node failure before and after the CoreML options
 patch. The compact fixed FP16 encoder passed the CPU boundary probe with
-ORT 1.28.2. An earlier folded fixed FP16 export failed ORT 1.28.2
-initialization while replacing an initializer.
+ORT 1.28.2. The folded fixed FP16 export failed ORT 1.28.2 CPU initialization
+with the default graph optimizations while replacing an initializer.
+
+The folded encoder SHA-256 is
+`5a5b3e2c49caa77ee6a6781ca5dc1ed04fa99f16bd4a6fc689a6f3c9b28f3f60`.
+The compact encoder SHA-256 is
+`a7ec95505813124917e1ffcdf87bb0577d921b629f35e3c4d478839e27b0bf67`.
 
 For the Apple package, use the fixed encoder and its matching frontend
 with the standard decoder, joiner and tokens. Add these lines to the CoreML
