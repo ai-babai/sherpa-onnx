@@ -1131,8 +1131,16 @@ class OfflineRecognizer(object):
         A stream's "language" option overrides the configured default.
         Set provider to "cpu", "cuda" or "coreml", optionally followed by
         ":<config-file>" for ONNX Runtime session and provider options.
+        On macOS 15+, a native Core ML build also accepts a compiled
+        GigaAM RNN-T encoder directory with provider="coreml". For this
+        encoder the advance graph runs on CPU.
         """
-        for path in (encoder, advance, tokenizer):
+        if encoder.endswith(".mlmodelc"):
+            if not Path(encoder).is_dir():
+                raise ValueError(f"Not a compiled model directory: {encoder}")
+        else:
+            _assert_file_exists(encoder)
+        for path in (advance, tokenizer):
             _assert_file_exists(path)
 
         model = OfflineGigaAMModelConfig()

@@ -24,7 +24,7 @@
 
 #include "sherpa-onnx/csrc/file-utils.h"
 #if defined(SHERPA_ONNX_ENABLE_GIGAAM_COREML)
-#include "sherpa-onnx/csrc/gigaam-coreml-ctc.h"
+#include "sherpa-onnx/csrc/gigaam-coreml-encoder.h"
 #endif
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/onnx-utils.h"

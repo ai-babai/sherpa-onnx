@@ -15,6 +15,10 @@
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/text-utils.h"
 
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_COREML)
+#include <sys/stat.h>
+#endif
+
 namespace sherpa_onnx {
 
 namespace {
@@ -56,7 +60,14 @@ void OfflineGigaAMModelConfig::Register(ParseOptions *po) {
 
 bool OfflineGigaAMModelConfig::Validate() const {
   for (const auto *path : {&encoder, &advance, &tokenizer}) {
-    if (!FileExists(*path)) {
+    bool exists = FileExists(*path);
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_COREML)
+    if (path == &encoder && EndsWith(*path, ".mlmodelc")) {
+      struct stat info{};
+      exists = stat(path->c_str(), &info) == 0 && S_ISDIR(info.st_mode);
+    }
+#endif
+    if (!exists) {
       SHERPA_ONNX_LOGE("GigaAM file does not exist: '%s'", path->c_str());
       return false;
     }

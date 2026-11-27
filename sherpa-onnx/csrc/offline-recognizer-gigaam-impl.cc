@@ -19,6 +19,10 @@
 #include "sherpa-onnx/csrc/session.h"
 #include "sherpa-onnx/csrc/text-utils.h"
 
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_COREML)
+#include "sherpa-onnx/csrc/gigaam-coreml-encoder.h"
+#endif
+
 namespace sherpa_onnx {
 
 namespace {
@@ -89,25 +93,39 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
         head_(config.model_config.gigaam.head == "e2e" ? 0 : 1),
         env_(ORT_LOGGING_LEVEL_ERROR) {
     const auto &model = config.model_config.gigaam;
-    const auto options = [&config](const char *graph) {
-      auto opts = GetSessionOptionsImpl(
-          config.model_config.num_threads, config.model_config.provider,
-          nullptr, nullptr, graph);
+    const auto options = [&config](const char *graph,
+                                   const std::string &provider) {
+      auto opts = GetSessionOptionsImpl(config.model_config.num_threads,
+                                        provider, nullptr, nullptr, graph);
       opts.SetLogId(graph);
       opts.AddConfigEntry("session.intra_op.allow_spinning", "0");
       return opts;
     };
 
-    encoder_ = std::make_unique<Ort::Session>(
-        env_, SHERPA_ONNX_TO_ORT_PATH(model.encoder), options("encoder"));
-    const size_t num_inputs = encoder_->GetInputCount();
-    has_language_input_ = num_inputs == kEncoderInputs.size();
-    CheckGraph(encoder_.get(), kEncoderInputs, has_language_input_ ? 3 : 2,
-               kEncoderOutputs);
+    const auto &provider = config.model_config.provider;
+    const bool compiled = EndsWith(model.encoder, ".mlmodelc");
+    if (compiled) {
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_COREML)
+      coreml_encoder_ =
+          std::make_unique<GigaAmCoremlRnnt>(model.encoder, provider);
+      has_language_input_ = coreml_encoder_->HasLanguageInput();
+#else
+      throw std::invalid_argument(
+          "Compiled GigaAM requires a native Core ML build");
+#endif
+    } else {
+      encoder_ = std::make_unique<Ort::Session>(
+          env_, SHERPA_ONNX_TO_ORT_PATH(model.encoder),
+          options("encoder", provider));
+      has_language_input_ = encoder_->GetInputCount() == kEncoderInputs.size();
+      CheckGraph(encoder_.get(), kEncoderInputs, has_language_input_ ? 3 : 2,
+                 kEncoderOutputs);
+    }
     LanguageSlot(model.language);
 
     advance_ = std::make_unique<Ort::Session>(
-        env_, SHERPA_ONNX_TO_ORT_PATH(model.advance), options("advance"));
+        env_, SHERPA_ONNX_TO_ORT_PATH(model.advance),
+        options("advance", compiled ? "cpu" : provider));
     CheckGraph(advance_.get(), kAdvanceInputs, kAdvanceInputs.size(),
                kAdvanceOutputs);
   }
@@ -160,10 +178,30 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
   }
 
   Ort::Value RunGraphs(std::vector<float> *features, int32_t slot) const {
-    const auto memory =
-        Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
+    auto encoded = RunEncoder(features, slot);
+    CheckEncodedLength(encoded[1], ProjectionFrameCount(encoded[0]));
+    auto output =
+        advance_->Run({}, kAdvanceInputs.data(), encoded.data(), encoded.size(),
+                      kAdvanceOutputs.data(), kAdvanceOutputs.size());
+    return std::move(output[0]);
+  }
+
+  std::array<Ort::Value, 2> RunEncoder(std::vector<float> *features,
+                                       int32_t slot) const {
     constexpr int32_t kBins = GigaAMFeatureExtractor::kNumBins;
     int64_t num_frames = static_cast<int64_t>(features->size() / kBins);
+    std::array<float, kNumLanguages> language_vector{};
+    language_vector[slot] = 1.0f;
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_COREML)
+    if (coreml_encoder_) {
+      Ort::AllocatorWithDefaultOptions allocator;
+      return coreml_encoder_->Forward(
+          features->data(), num_frames,
+          has_language_input_ ? language_vector.data() : nullptr, allocator);
+    }
+#endif
+    const auto memory =
+        Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
     const std::array<int64_t, 3> feature_shape{1, kBins, num_frames};
     constexpr std::array<int64_t, 1> length_shape{1};
     std::array<Ort::Value, 3> inputs{
@@ -173,9 +211,7 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
                                  length_shape.size()),
         Ort::Value{nullptr}};
 
-    std::array<float, kNumLanguages> language_vector{};
     if (has_language_input_) {
-      language_vector[slot] = 1.0f;
       constexpr std::array<int64_t, 2> shape{1, kNumLanguages};
       inputs[2] = Ort::Value::CreateTensor(memory, language_vector.data(),
                                            language_vector.size(), shape.data(),
@@ -187,11 +223,7 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
     auto encoded = encoder_->Run(
         {}, kEncoderInputs.data(), inputs.data(), has_language_input_ ? 3 : 2,
         kEncoderOutputs.data(), kEncoderOutputs.size());
-    CheckEncodedLength(encoded[1], ProjectionFrameCount(encoded[0]));
-    auto output =
-        advance_->Run({}, kAdvanceInputs.data(), encoded.data(), encoded.size(),
-                      kAdvanceOutputs.data(), kAdvanceOutputs.size());
-    return std::move(output[0]);
+    return {std::move(encoded[0]), std::move(encoded[1])};
   }
 
   OfflineRecognitionResult DecodeTokens(const Ort::Value &tokens) const {
@@ -228,6 +260,9 @@ class OfflineRecognizerGigaAMImpl : public OfflineRecognizerImpl {
   Ort::Env env_;
   std::unique_ptr<Ort::Session> encoder_;
   std::unique_ptr<Ort::Session> advance_;
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_COREML)
+  std::unique_ptr<GigaAmCoremlRnnt> coreml_encoder_;
+#endif
 };
 
 }  // namespace
