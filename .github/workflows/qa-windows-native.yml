@@ -1,0 +1,147 @@
+name: Windows x64 native QA
+
+on:
+  push:
+    branches: [qa/windows-native-12c74f4]
+    paths: [.github/workflows/qa-windows-native.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  msvc:
+    runs-on: windows-2022
+    timeout-minutes: 55
+    env:
+      SOURCE_SHA: 12c74f4a91984887eba08971e365c906df072207
+      ORT_NAME: onnxruntime-win-x64-MT-Release-1.28.2.tar.bz2
+      ORT_SHA: cd7f757f7a38ce14238bc9198bee197a9430b42ec3ecadea3408dd2e832eb02e
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 4
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12.10'
+          architecture: x64
+      - name: Configure CPU Release with the pinned Sherpa ORT SDK
+        shell: pwsh
+        run: |
+          $expected = '.github/workflows/qa-windows-native.yml'
+          $changes = @(git diff --name-only $env:SOURCE_SHA HEAD)
+          if ($LASTEXITCODE -ne 0 -or $changes.Count -ne 1 -or $changes[0] -ne $expected) {
+            throw 'QA branch must differ from the pinned source by only this workflow.'
+          }
+          New-Item -ItemType Directory build | Out-Null
+          $sdk = Join-Path build $env:ORT_NAME
+          $url = "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.28.2/$env:ORT_NAME"
+          curl.exe --fail --location --retry 3 --output $sdk $url
+          if ($LASTEXITCODE -ne 0) { throw 'ORT SDK download failed' }
+          if ((Get-FileHash -Algorithm SHA256 $sdk).Hash -ine $env:ORT_SHA) {
+            throw 'ORT SDK SHA-256 mismatch'
+          }
+          $python = (Get-Command python.exe).Source
+          cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 `
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON `
+            -DSHERPA_ONNX_USE_STATIC_CRT=ON `
+            -DSHERPA_ONNX_USE_PRE_INSTALLED_ONNXRUNTIME_IF_AVAILABLE=OFF `
+            -DSHERPA_ONNX_ENABLE_GPU=OFF -DSHERPA_ONNX_ENABLE_DIRECTML=OFF `
+            -DSHERPA_ONNX_ENABLE_BINARY=ON -DSHERPA_ONNX_ENABLE_PYTHON=ON `
+            -DSHERPA_ONNX_ENABLE_TTS=ON -DSHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=ON `
+            -DSHERPA_ONNX_ENABLE_C_API=OFF -DSHERPA_ONNX_BUILD_C_API_EXAMPLES=OFF `
+            -DSHERPA_ONNX_ENABLE_PORTAUDIO=OFF -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF `
+            "-DPython_EXECUTABLE=$python" "-DPYTHON_EXECUTABLE=$python"
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+      - name: Build offline and streaming CLI and CPython extension
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel 3 --target sherpa-onnx-offline sherpa-onnx _sherpa_onnx
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC build failed' }
+      - name: Stage the binaries and inspect their DLLs
+        shell: pwsh
+        run: |
+          $dist = New-Item -ItemType Directory qa-artifact
+          $bin = New-Item -ItemType Directory "$dist/bin"
+          $pythonDir = New-Item -ItemType Directory "$dist/python"
+          Copy-Item sherpa-onnx/python/sherpa_onnx "$pythonDir/sherpa_onnx" -Recurse
+          $pythonLib = New-Item -ItemType Directory "$pythonDir/sherpa_onnx/lib" -Force
+          $executables = @(
+            Get-Item build/bin/Release/sherpa-onnx-offline.exe
+            Get-Item build/bin/Release/sherpa-onnx.exe
+          )
+          $extensions = @(Get-ChildItem build -Filter '_sherpa_onnx*.pyd' -File -Recurse)
+          if ($extensions.Count -ne 1 -or $extensions[0].Name -notmatch '(^_sherpa_onnx\.pyd$|cp312-win_amd64\.pyd$)') {
+            throw "Expected one CPython 3.12 x64 extension, found $($extensions.Name)"
+          }
+          Copy-Item $executables.FullName $bin
+          Copy-Item $extensions[0].FullName $pythonLib
+
+          $sdkLib = Get-Item build/_deps/onnxruntime-src/lib
+          $candidates = @{}
+          Get-ChildItem build -File -Filter '*.dll' -Recurse | ForEach-Object { $candidates[$_.Name] = $_ }
+          Get-ChildItem $sdkLib -File -Filter '*.dll' | ForEach-Object { $candidates[$_.Name] = $_ }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $dumpbin = @(& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe')[0]
+          if (!$dumpbin) { throw 'dumpbin was not found' }
+          $pending = [System.Collections.Generic.Queue[object]]::new()
+          foreach ($file in ($executables + $extensions)) { $pending.Enqueue($file) }
+          foreach ($name in @('onnxruntime.dll','onnxruntime_providers_shared.dll')) {
+            if (!$candidates.ContainsKey($name)) { throw "Missing SDK DLL: $name" }
+            $pending.Enqueue($candidates[$name])
+          }
+          $seen = @{}
+          while ($pending.Count -gt 0) {
+            $file = $pending.Dequeue()
+            if ($seen.ContainsKey($file.Name)) { continue }
+            $seen[$file.Name] = $true
+            if ($file.Extension -ieq '.dll') {
+              Copy-Item $file.FullName $bin
+              Copy-Item $file.FullName $pythonLib
+            }
+            $imports = & $dumpbin /DEPENDENTS $file.FullName
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for $($file.Name)" }
+            $imports | Add-Content "$dist/dll-imports.txt"
+            foreach ($line in $imports) {
+              if ($line -match '^\s+([\w.-]+\.dll)\s*$' -and $candidates.ContainsKey($Matches[1])) {
+                $pending.Enqueue($candidates[$Matches[1]])
+              }
+            }
+          }
+          @(
+            "source=$env:SOURCE_SHA"
+            "workflow=$env:GITHUB_SHA"
+            "python=$(python --version)"
+            "ort_sdk_sha256=$env:ORT_SHA"
+          ) | Set-Content "$dist/build.txt"
+      - name: Smoke the staged CLI and standard Python package
+        shell: pwsh
+        run: |
+          $dist = (Resolve-Path qa-artifact).Path
+          foreach ($entry in @(
+            @{ exe='sherpa-onnx-offline.exe'; terms=@('--gigaam-encoder','--gigaam-advance','--gigaam-tokenizer','--gigaam-head') },
+            @{ exe='sherpa-onnx.exe'; terms=@('gigaam_v4','--left-padding','--right-padding') }
+          )) {
+            $help = & "$dist/bin/$($entry.exe)" --help 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "$($entry.exe) --help exited $LASTEXITCODE" }
+            foreach ($term in $entry.terms) {
+              if (!$help.Contains($term)) { throw "$($entry.exe) help missing $term" }
+            }
+            $help | Set-Content "$dist/$($entry.exe).help.txt"
+          }
+          $env:PYTHONPATH = "$dist/python"
+          $env:PYTHONNOUSERSITE = '1'
+          python -B -c "import sys, struct, sherpa_onnx as s; assert sys.version_info[:2] == (3,12) and struct.calcsize('P') == 8; assert hasattr(s.OfflineRecognizer, 'from_gigaam') and hasattr(s.OnlineRecognizer, 'from_transducer'); print(s.__file__, s.version, s.onnxruntime_version)"
+          if ($LASTEXITCODE -ne 0) { throw 'Standard Sherpa package import failed' }
+          Get-ChildItem $dist -File -Recurse | Sort-Object FullName | ForEach-Object {
+            $relative = [IO.Path]::GetRelativePath($dist, $_.FullName).Replace('\','/')
+            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $relative"
+          } | Set-Content "$dist/SHA256SUMS" -Encoding ascii
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sherpa-native-win-x64-12c74f4
+          path: qa-artifact/
+          if-no-files-found: error
+          retention-days: 3
