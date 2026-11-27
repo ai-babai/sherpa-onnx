@@ -4,6 +4,9 @@
 #include "sherpa-onnx/csrc/online-model-config.h"
 
 #include <string>
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+#include <sys/stat.h>
+#endif
 
 #include "sherpa-onnx/csrc/file-utils.h"
 #include "sherpa-onnx/csrc/macros.h"
@@ -171,6 +174,22 @@ bool OnlineModelConfig::Validate() const {
   if (!provider_config.Validate()) {
     return false;
   }
+
+#if defined(SHERPA_ONNX_ENABLE_GIGAAM_FUSED_COREML)
+  if (provider_config.provider == "coreml_fused") {
+    struct stat info = {};
+    if (model_type != "gigaam_v4" ||
+        !EndsWith(transducer.encoder, "_stream_step.mlmodelc") ||
+        stat(transducer.encoder.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) ||
+        !FileExists(transducer.decoder) || !FileExists(transducer.joiner)) {
+      SHERPA_ONNX_LOGE(
+          "coreml_fused needs model-type=gigaam_v4, a compiled "
+          "*_stream_step.mlmodelc directory, and the decoder and joiner files");
+      return false;
+    }
+    return true;
+  }
+#endif
 
   if (!paraformer.encoder.empty()) {
     return paraformer.Validate();
